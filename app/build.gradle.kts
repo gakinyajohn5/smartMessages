@@ -14,8 +14,9 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
-        // Change to your deployed server (must be https).
-        buildConfigField("String", "API_BASE_URL", "\"https://your-server.example.com\"")
+        // Supabase project URL and the anon / publishable key (safe to ship; never the service_role key).
+        buildConfigField("String", "SUPABASE_URL", "\"https://YOUR-PROJECT.supabase.co\"")
+        buildConfigField("String", "SUPABASE_KEY", "\"YOUR-ANON-OR-PUBLISHABLE-KEY\"")
     }
 
     buildTypes {

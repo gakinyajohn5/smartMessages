@@ -54,11 +54,13 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val res = withContext(Dispatchers.IO) {
                 runCatching {
-                    Api.post("/api/activate", JSONObject().put("code", code.trim()).put("deviceId", deviceId))
+                    Api.rpc("activate_license", JSONObject().put("p_code", code.trim()).put("p_device", deviceId))
                 }
             }
             val (status, json) = res.getOrElse { done(OFFLINE); return@launch }
-            if (status !in 200..299) { done(json.optString("error", GENERIC_ERROR)); return@launch }
+            if (status !in 200..299 || !json.optBoolean("ok")) {
+                done(json.optString("error", GENERIC_ERROR)); return@launch
+            }
             _state.value = _state.value.copy(licenseCode = json.optString("licenseCode", code.trim()))
             save()
             done(null)
@@ -72,14 +74,16 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val res = withContext(Dispatchers.IO) {
                 runCatching {
-                    Api.post(
-                        "/api/redeem",
-                        JSONObject().put("licenseCode", license).put("code", codeInput.trim()).put("deviceId", deviceId),
+                    Api.rpc(
+                        "redeem_topup",
+                        JSONObject().put("p_license", license).put("p_code", codeInput.trim()).put("p_device", deviceId),
                     )
                 }
             }
             val (status, json) = res.getOrElse { done(OFFLINE); return@launch }
-            if (status !in 200..299) { done(json.optString("error", GENERIC_ERROR)); return@launch }
+            if (status !in 200..299 || !json.optBoolean("ok")) {
+                done(json.optString("error", GENERIC_ERROR)); return@launch
+            }
 
             val used = prefs.getStringSet(KEY_REDEEMED, emptySet()).orEmpty()
             // The server says "replay" when this phone redeemed it before. If we never credited it
