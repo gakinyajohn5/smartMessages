@@ -155,9 +155,9 @@ fun MpesaApp(vm: WalletViewModel) {
                     },
                     title = {
                         Column {
-                            Text(state.playerName.ifBlank { "PESA BOARD" }, fontWeight = FontWeight.Medium)
+                            Text(state.playerName.ifBlank { "Messages" }, fontWeight = FontWeight.Medium)
                             Text(
-                                "Game money, not real M-PESA",
+                                "Paying Made Easier",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -384,7 +384,7 @@ private fun PayDialog(onSubmit: (PayRequest) -> String?, onDismiss: () -> Unit) 
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Pay someone") },
+        title = { Text("Pay ") },
         text = {
             Column(
                 Modifier.verticalScroll(rememberScrollState()),
@@ -463,7 +463,7 @@ private fun ActivationScreen(onActivate: (String, (String?) -> Unit) -> Unit) {
             Text("Activate Pesa Board", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Medium)
             Spacer(Modifier.size(8.dp))
             Text(
-                "Enter the activation code you received when you bought the game. " +
+                "Enter the activation code you received when you bought the App. " +
                     "It works on one phone only.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
