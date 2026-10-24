@@ -8,7 +8,8 @@ import java.net.URL
 object Api {
     fun rpc(function: String, body: JSONObject): Pair<Int, JSONObject> {
         val key = BuildConfig.SUPABASE_KEY
-        val conn = URL("${BuildConfig.SUPABASE_URL}/rest/v1/rpc/$function").openConnection() as HttpURLConnection
+        val base = BuildConfig.SUPABASE_URL.trim().removeSuffix("/").removeSuffix("/rest/v1")
+        val conn = URL("$base/rest/v1/rpc/$function").openConnection() as HttpURLConnection
         try {
             conn.requestMethod = "POST"
             conn.connectTimeout = 10_000
