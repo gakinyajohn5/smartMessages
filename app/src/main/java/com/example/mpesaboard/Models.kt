@@ -30,7 +30,7 @@ data class WalletState(
     val spentCents: Long = 0,
     val addedCents: Long = 0,
     val playerName: String = "",
-    val bankerPin: String = "",
+    val licenseCode: String = "",
     val messages: List<SmsMessage> = emptyList(), // stored newest first
     val isSetUp: Boolean = false,
 )

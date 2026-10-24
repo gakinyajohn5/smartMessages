@@ -14,6 +14,8 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
+        // Change to your deployed server (must be https).
+        buildConfigField("String", "API_BASE_URL", "\"https://your-server.example.com\"")
     }
 
     buildTypes {
@@ -26,7 +28,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
 }
 
 dependencies {

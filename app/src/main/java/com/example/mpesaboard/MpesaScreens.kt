@@ -31,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -77,6 +78,11 @@ fun MpesaApp(vm: WalletViewModel) {
     val state by vm.state.collectAsStateWithLifecycle()
     val banner by vm.banner.collectAsStateWithLifecycle()
 
+    if (state.licenseCode.isEmpty()) {
+        ActivationScreen(onActivate = vm::activate)
+        return
+    }
+
     var showPay by rememberSaveable { mutableStateOf(false) }
     var showCash by rememberSaveable { mutableStateOf(false) }
     var showProfile by rememberSaveable { mutableStateOf(false) }
@@ -107,7 +113,7 @@ fun MpesaApp(vm: WalletViewModel) {
                             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                                 DropdownMenuItem(text = { Text("Pay someone") },
                                     onClick = { menuOpen = false; showPay = true })
-                                DropdownMenuItem(text = { Text("Add cash (banker)") },
+                                DropdownMenuItem(text = { Text("Redeem top-up code") },
                                     onClick = { menuOpen = false; showCash = true })
                                 DropdownMenuItem(text = { Text("Profile") },
                                     onClick = { menuOpen = false; showProfile = true })
@@ -118,9 +124,9 @@ fun MpesaApp(vm: WalletViewModel) {
                     },
                     title = {
                         Column {
-                            Text(state.playerName.ifBlank { "MPESA" }, fontWeight = FontWeight.Medium)
+                            Text(state.playerName.ifBlank { "PESA BOARD" }, fontWeight = FontWeight.Medium)
                             Text(
-                                "Practice wallet, not real M-PESA",
+                                "Game money, not real M-PESA",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -180,11 +186,10 @@ fun MpesaApp(vm: WalletViewModel) {
         )
     }
     if (showPay) PayDialog(onSubmit = vm::pay, onDismiss = { showPay = false })
-    if (showCash) CashDialog(onSubmit = vm::addCash, onDismiss = { showCash = false })
+    if (showCash) RedeemDialog(onSubmit = vm::redeem, onDismiss = { showCash = false })
     if (showProfile) {
         ProfileDialog(
             initialName = state.playerName,
-            initialPin = state.bankerPin,
             onSave = vm::saveProfile,
             onDismiss = { showProfile = false },
         )
@@ -308,7 +313,7 @@ private fun Avatar(modifier: Modifier = Modifier, size: Int = 36) {
         modifier = modifier.size(size.dp).background(MaterialTheme.colorScheme.primary, CircleShape),
         contentAlignment = Alignment.Center,
     ) {
-        Text("M", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold)
+        Text("P", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -350,7 +355,7 @@ fun TransactionBanner(message: SmsMessage?, onDismiss: () -> Unit, modifier: Mod
                     Spacer(Modifier.size(12.dp))
                     Column(Modifier.weight(1f)) {
                         Row {
-                            Text("MPESA", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                            Text("PESA BOARD", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                             Text("now", style = MaterialTheme.typography.labelSmall)
                         }
                         Text(
@@ -453,32 +458,64 @@ private fun PayDialog(onSubmit: (PayRequest) -> String?, onDismiss: () -> Unit) 
 }
 
 @Composable
-private fun CashDialog(onSubmit: (pin: String, amount: String) -> String?, onDismiss: () -> Unit) {
-    var pin by rememberSaveable { mutableStateOf("") }
-    var amount by rememberSaveable { mutableStateOf("") }
+private fun ActivationScreen(onActivate: (String, (String?) -> Unit) -> Unit) {
+    var code by rememberSaveable { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    Surface(Modifier.fillMaxSize()) {
+        Column(
+            Modifier.statusBarsPadding().padding(28.dp),
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Avatar(size = 56)
+            Spacer(Modifier.size(20.dp))
+            Text("Activate Pesa Board", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Medium)
+            Spacer(Modifier.size(8.dp))
+            Text(
+                "Enter the activation code you received when you bought the game. " +
+                    "It works on one phone only.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.size(20.dp))
+            OutlinedTextField(
+                value = code,
+                onValueChange = { code = it.uppercase().take(14); error = null },
+                label = { Text("Activation code") },
+                placeholder = { Text("XXXX-XXXX-XXXX") },
+                singleLine = true,
+                isError = error != null,
+                supportingText = error?.let { { Text(it) } },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.size(12.dp))
+            Button(
+                enabled = !busy && code.isNotBlank(),
+                onClick = { busy = true; error = null; onActivate(code) { e -> busy = false; error = e } },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(if (busy) "Checking…" else "Activate") }
+        }
+    }
+}
+
+@Composable
+private fun RedeemDialog(onSubmit: (String, (String?) -> Unit) -> Unit, onDismiss: () -> Unit) {
+    var code by rememberSaveable { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
 
     AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Add cash (banker)") },
+        onDismissRequest = { if (!busy) onDismiss() },
+        title = { Text("Redeem top-up code") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("The banker enters their PIN to add cash to this wallet.")
+                Text("Enter the top-up code you got from the game admin. You need an internet connection.")
                 OutlinedTextField(
-                    value = pin,
-                    onValueChange = { if (it.all(Char::isDigit) && it.length <= 8) { pin = it; error = null } },
-                    label = { Text("Banker PIN") },
+                    value = code,
+                    onValueChange = { code = it.uppercase().take(14); error = null },
+                    label = { Text("Top-up code") },
+                    placeholder = { Text("XXXX-XXXX-XXXX") },
                     singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = amount,
-                    onValueChange = { if (Money.isValidInput(it)) { amount = it; error = null } },
-                    label = { Text("Amount (Ksh)") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     isError = error != null,
                     supportingText = error?.let { { Text(it) } },
                     modifier = Modifier.fillMaxWidth(),
@@ -486,57 +523,38 @@ private fun CashDialog(onSubmit: (pin: String, amount: String) -> String?, onDis
             }
         },
         confirmButton = {
-            TextButton(onClick = {
-                error = onSubmit(pin, amount)
-                if (error == null) onDismiss()
-            }) { Text("Add cash") }
+            TextButton(
+                enabled = !busy && code.isNotBlank(),
+                onClick = {
+                    busy = true
+                    onSubmit(code) { e -> busy = false; error = e; if (e == null) onDismiss() }
+                },
+            ) { Text(if (busy) "Checking…" else "Redeem") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        dismissButton = { TextButton(enabled = !busy, onClick = onDismiss) { Text("Cancel") } },
     )
 }
 
 @Composable
 private fun ProfileDialog(
     initialName: String,
-    initialPin: String,
-    onSave: (name: String, pin: String) -> String?,
+    onSave: (name: String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var name by rememberSaveable { mutableStateOf(initialName) }
-    var pin by rememberSaveable { mutableStateOf(initialPin) }
-    var error by remember { mutableStateOf<String?>(null) }
-
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Profile") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it.take(20) },
-                    label = { Text("Player name") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = pin,
-                    onValueChange = { if (it.all(Char::isDigit) && it.length <= 8) { pin = it; error = null } },
-                    label = { Text("Banker PIN (set by the banker)") },
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                    isError = error != null,
-                    supportingText = error?.let { { Text(it) } },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it.take(20) },
+                label = { Text("Player name") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
         },
-        confirmButton = {
-            TextButton(onClick = {
-                error = onSave(name, pin)
-                if (error == null) onDismiss()
-            }) { Text("Save") }
-        },
+        confirmButton = { TextButton(onClick = { onSave(name); onDismiss() }) { Text("Save") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }

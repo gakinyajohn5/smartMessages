@@ -2,10 +2,15 @@ package com.example.mpesaboard
 
 import android.app.Application
 import android.content.Context
+import android.provider.Settings
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -16,6 +21,9 @@ import kotlin.random.Random
 class WalletViewModel(app: Application) : AndroidViewModel(app) {
 
     private val prefs = app.getSharedPreferences("mpesa_board", Context.MODE_PRIVATE)
+
+    private val deviceId: String = Settings.Secure.getString(app.contentResolver, Settings.Secure.ANDROID_ID)
+        ?: "unknown-device"
 
     private val _state = MutableStateFlow(load())
     val state: StateFlow<WalletState> = _state.asStateFlow()
@@ -29,18 +37,65 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
             balanceCents = startingCents,
             startCents = startingCents,
             playerName = old.playerName,
-            bankerPin = old.bankerPin,
+            licenseCode = old.licenseCode,
             isSetUp = true,
         )
         _banner.value = null
         save()
     }
 
-    fun saveProfile(name: String, pin: String): String? {
-        if (pin.isNotEmpty() && pin.length < 4) return "Banker PIN needs at least 4 digits"
-        _state.value = _state.value.copy(playerName = name.trim(), bankerPin = pin)
+    fun saveProfile(name: String) {
+        _state.value = _state.value.copy(playerName = name.trim())
         save()
-        return null
+    }
+
+    /** Checks the activation code with the server and locks it to this phone. */
+    fun activate(code: String, done: (String?) -> Unit) {
+        viewModelScope.launch {
+            val res = withContext(Dispatchers.IO) {
+                runCatching {
+                    Api.post("/api/activate", JSONObject().put("code", code.trim()).put("deviceId", deviceId))
+                }
+            }
+            val (status, json) = res.getOrElse { done(OFFLINE); return@launch }
+            if (status !in 200..299) { done(json.optString("error", GENERIC_ERROR)); return@launch }
+            _state.value = _state.value.copy(licenseCode = json.optString("licenseCode", code.trim()))
+            save()
+            done(null)
+        }
+    }
+
+    /** Redeems an admin-issued top-up code. Each code works once, on the activated phone only. */
+    fun redeem(codeInput: String, done: (String?) -> Unit) {
+        val license = _state.value.licenseCode
+        val key = codeInput.uppercase().filter { it.isLetterOrDigit() }
+        viewModelScope.launch {
+            val res = withContext(Dispatchers.IO) {
+                runCatching {
+                    Api.post(
+                        "/api/redeem",
+                        JSONObject().put("licenseCode", license).put("code", codeInput.trim()).put("deviceId", deviceId),
+                    )
+                }
+            }
+            val (status, json) = res.getOrElse { done(OFFLINE); return@launch }
+            if (status !in 200..299) { done(json.optString("error", GENERIC_ERROR)); return@launch }
+
+            val used = prefs.getStringSet(KEY_REDEEMED, emptySet()).orEmpty()
+            // The server says "replay" when this phone redeemed it before. If we never credited it
+            // (the earlier response got lost), credit it now; otherwise refuse.
+            if (json.optBoolean("replay") && key in used) { done("You've already used this code"); return@launch }
+
+            val cents = json.getLong("amountCents")
+            val current = _state.value
+            val newBalance = current.balanceCents + cents
+            val (id, date, time) = stamp(current.messages)
+            val body = "$id Top-up. Ksh${Money.format(cents)} added by Pesa Board on $date at $time. " +
+                "Balance Ksh${Money.format(newBalance)}. Game money, not real."
+            commit(current, newBalance, SmsMessage(id, body, System.currentTimeMillis()), spent = 0, added = cents)
+            prefs.edit().putStringSet(KEY_REDEEMED, used + key).apply()
+            done(null)
+        }
     }
 
     /** Pays a bank, paybill, till or Pochi la Biashara. Returns an error message or null. */
@@ -71,35 +126,16 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
         val (code, date, time) = stamp(current.messages)
         val amount = "Ksh${Money.format(cents)}"
         val balance = "Ksh${Money.format(newBalance)}"
-        val tail = "New M-PESA balance is $balance. Transaction cost, Ksh0.00."
-
-        val body = when (req.kind) {
-            PayKind.TILL ->
-                "$code Confirmed. $amount paid to $name. on $date at $time. $tail"
-            PayKind.PAYBILL, PayKind.BANK ->
-                "$code Confirmed. $amount sent to $name for account $account on $date at $time. $tail"
-            PayKind.POCHI ->
-                "$code Confirmed. $amount sent to $name $number on $date at $time. $tail"
+        val tail = "Balance $balance. Game money, not real."
+        val dest = when (req.kind) {
+            PayKind.TILL -> "$name (Till $number)"
+            PayKind.PAYBILL -> "$name (Paybill $number, Acc $account)"
+            PayKind.BANK -> "$name (Bank paybill $number, Acc $account)"
+            PayKind.POCHI -> "$name (Pochi $number)"
         }
+        val body = "$code Paid $amount to $dest on $date at $time. $tail"
         commit(current, newBalance, SmsMessage(code, body, System.currentTimeMillis()),
             spent = cents, added = 0)
-        return null
-    }
-
-    /** Banker top-up: needs the PIN saved in the profile. Returns an error message or null. */
-    fun addCash(pin: String, amountText: String): String? {
-        val current = _state.value
-        if (current.bankerPin.isEmpty()) return "Set a banker PIN in Profile first"
-        if (pin != current.bankerPin) return "Wrong banker PIN"
-        val cents = Money.parse(amountText) ?: return "Enter a valid amount"
-        if (cents <= 0) return "Amount must be greater than Ksh0.00"
-
-        val newBalance = current.balanceCents + cents
-        val (code, date, time) = stamp(current.messages)
-        val body = "$code Confirmed. You have received Ksh${Money.format(cents)} from BANKER " +
-            "on $date at $time. New M-PESA balance is Ksh${Money.format(newBalance)}."
-        commit(current, newBalance, SmsMessage(code, body, System.currentTimeMillis()),
-            spent = 0, added = cents)
         return null
     }
 
@@ -143,7 +179,9 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun load(): WalletState {
-        if (!prefs.contains(KEY_BALANCE)) return WalletState()
+        if (!prefs.getBoolean(KEY_SETUP, false)) {
+            return WalletState(licenseCode = prefs.getString(KEY_LICENSE, "") ?: "")
+        }
         val messages = runCatching {
             val arr = JSONArray(prefs.getString(KEY_MESSAGES, "[]"))
             List(arr.length()) { i ->
@@ -158,7 +196,7 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
             spentCents = prefs.getLong(KEY_SPENT, 0),
             addedCents = prefs.getLong(KEY_ADDED, 0),
             playerName = prefs.getString(KEY_NAME, "") ?: "",
-            bankerPin = prefs.getString(KEY_PIN, "") ?: "",
+            licenseCode = prefs.getString(KEY_LICENSE, "") ?: "",
             messages = messages,
             isSetUp = true,
         )
@@ -171,23 +209,28 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
             arr.put(JSONObject().put("id", it.id).put("body", it.body).put("ts", it.timestamp))
         }
         prefs.edit()
+            .putBoolean(KEY_SETUP, s.isSetUp)
             .putLong(KEY_BALANCE, s.balanceCents)
             .putLong(KEY_START, s.startCents)
             .putLong(KEY_SPENT, s.spentCents)
             .putLong(KEY_ADDED, s.addedCents)
             .putString(KEY_NAME, s.playerName)
-            .putString(KEY_PIN, s.bankerPin)
+            .putString(KEY_LICENSE, s.licenseCode)
             .putString(KEY_MESSAGES, arr.toString())
             .apply()
     }
 
     private companion object {
+        const val KEY_SETUP = "is_set_up"
         const val KEY_BALANCE = "balance_cents"
         const val KEY_START = "start_cents"
         const val KEY_SPENT = "spent_cents"
         const val KEY_ADDED = "added_cents"
         const val KEY_NAME = "player_name"
-        const val KEY_PIN = "banker_pin"
+        const val KEY_LICENSE = "license_code"
+        const val KEY_REDEEMED = "redeemed_codes"
+        const val OFFLINE = "Couldn't reach the server. Check your internet and try again."
+        const val GENERIC_ERROR = "Something went wrong. Try again."
         const val KEY_MESSAGES = "messages"
     }
 }
