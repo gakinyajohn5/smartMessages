@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -33,8 +35,6 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -45,6 +45,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.ui.graphics.Color
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -74,17 +75,34 @@ fun MpesaApp(vm: WalletViewModel) {
     val banner by vm.banner.collectAsStateWithLifecycle()
 
     var showForm by rememberSaveable { mutableStateOf(false) }
-    var showNewGame by rememberSaveable { mutableStateOf(false) }
+    var showReset by rememberSaveable { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
+
+    // Oldest at the top, newest at the bottom, grouped by day like a chat thread.
+    val dayFmt = remember { SimpleDateFormat("EEE, d MMM", Locale.US) }
+    val grouped = remember(state.messages) {
+        state.messages.asReversed().groupBy { dayFmt.format(Date(it.timestamp)) }
+    }
+    val totalItems = grouped.values.sumOf { it.size + 1 }
+    val listState = rememberLazyListState()
+    LaunchedEffect(totalItems) {
+        if (totalItems > 0) listState.animateScrollToItem(totalItems - 1)
+    }
 
     Box(Modifier.fillMaxSize()) {
         Scaffold(
+            containerColor = MaterialTheme.colorScheme.surface,
             topBar = {
                 TopAppBar(
+                    navigationIcon = { Avatar(Modifier.padding(start = 16.dp, end = 4.dp)) },
                     title = {
                         Column {
-                            Text("M-PESA", fontWeight = FontWeight.Bold)
-                            Text("Board game wallet", style = MaterialTheme.typography.labelMedium)
+                            Text("MPESA", fontWeight = FontWeight.Medium)
+                            Text(
+                                "Practice wallet, not real M-PESA",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                     },
                     actions = {
@@ -94,28 +112,18 @@ fun MpesaApp(vm: WalletViewModel) {
                             }
                             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                                 DropdownMenuItem(
-                                    text = { Text("Start new game") },
-                                    onClick = { menuOpen = false; showNewGame = true },
+                                    text = { Text("Reset balance") },
+                                    onClick = { menuOpen = false; showReset = true },
                                 )
                             }
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                        actionIconContentColor = MaterialTheme.colorScheme.onPrimary,
+                        containerColor = MaterialTheme.colorScheme.surface,
                     ),
                 )
             },
-            floatingActionButton = {
-                if (state.isSetUp) {
-                    ExtendedFloatingActionButton(
-                        onClick = { showForm = true },
-                        icon = { Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null) },
-                        text = { Text("Send / Pay") },
-                    )
-                }
-            },
+            bottomBar = { if (state.isSetUp) ComposerBar(onClick = { showForm = true }) },
         ) { padding ->
             Column(Modifier.padding(padding).fillMaxSize()) {
                 BalanceCard(state.balanceCents)
@@ -123,17 +131,20 @@ fun MpesaApp(vm: WalletViewModel) {
                     EmptyInbox()
                 } else {
                     LazyColumn(
+                        state = listState,
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 96.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        items(state.messages, key = { it.id }) { SmsRow(it) }
+                        grouped.forEach { (day, msgs) ->
+                            item(key = "day-$day") { DayHeader(day) }
+                            items(msgs, key = { it.id }) { SmsRow(it) }
+                        }
                     }
                 }
             }
         }
 
-        // Floating notification overlay, drawn above everything else.
         TransactionBanner(
             message = banner,
             onDismiss = vm::dismissBanner,
@@ -144,24 +155,68 @@ fun MpesaApp(vm: WalletViewModel) {
     if (!state.isSetUp) {
         BalanceDialog(
             title = "Set your starting balance",
-            message = "Enter the M-PESA balance each player starts the game with.",
+            message = "Enter the balance you start with.",
             confirmLabel = "Start",
             onConfirm = vm::startNewGame,
             onDismiss = null,
         )
     }
-    if (showNewGame) {
+    if (showReset) {
         BalanceDialog(
-            title = "Start a new game?",
-            message = "This clears all messages and resets your balance.",
+            title = "Reset balance?",
+            message = "This clears all messages and sets a new balance.",
             confirmLabel = "Reset",
-            onConfirm = { vm.startNewGame(it); showNewGame = false },
-            onDismiss = { showNewGame = false },
+            onConfirm = { vm.startNewGame(it); showReset = false },
+            onDismiss = { showReset = false },
         )
     }
     if (showForm) {
         TransactionDialog(onSubmit = vm::submit, onDismiss = { showForm = false })
     }
+}
+
+@Composable
+private fun ComposerBar(onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Surface(
+            onClick = onClick,
+            shape = RoundedCornerShape(28.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            modifier = Modifier.weight(1f),
+        ) {
+            Text(
+                "Pay someone",
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(Modifier.size(8.dp))
+        Surface(onClick = onClick, shape = CircleShape, color = MaterialTheme.colorScheme.primary) {
+            Icon(
+                Icons.AutoMirrored.Filled.Send,
+                contentDescription = "Send money",
+                tint = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.padding(14.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun DayHeader(day: String) {
+    Text(
+        day,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+    )
 }
 
 @Composable
@@ -189,7 +244,7 @@ private fun BalanceCard(balanceCents: Long) {
 private fun EmptyInbox() {
     Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
         Text(
-            "No messages yet.\nTap Send / Pay to make your first transaction.",
+            "No messages yet.\nTap Pay someone to make your first payment.",
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -199,34 +254,27 @@ private fun EmptyInbox() {
 @Composable
 private fun SmsRow(message: SmsMessage) {
     val time = remember(message.timestamp) {
-        SimpleDateFormat("d MMM, h:mm a", Locale.US).format(Date(message.timestamp))
+        SimpleDateFormat("h:mm a", Locale.US).format(Date(message.timestamp))
     }
-    Row(verticalAlignment = Alignment.Top) {
-        Avatar(Modifier.padding(top = 2.dp))
-        Spacer(Modifier.size(8.dp))
-        Column {
+    Column {
+        Surface(
+            shape = RoundedCornerShape(topStart = 4.dp, topEnd = 20.dp, bottomEnd = 20.dp, bottomStart = 20.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.widthIn(max = 300.dp),
+        ) {
             Text(
-                "MPESA",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 4.dp, bottom = 2.dp),
+                message.body,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
             )
-            Surface(
-                shape = RoundedCornerShape(topStart = 4.dp, topEnd = 18.dp, bottomEnd = 18.dp, bottomStart = 18.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.widthIn(max = 320.dp),
-            ) {
-                Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                    Text(message.body, style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        time,
-                        style = MaterialTheme.typography.labelSmall,
-                        modifier = Modifier.padding(top = 6.dp).align(Alignment.End),
-                    )
-                }
-            }
         }
+        Text(
+            time,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 6.dp, top = 2.dp),
+        )
     }
 }
 
@@ -297,35 +345,22 @@ fun TransactionBanner(message: SmsMessage?, onDismiss: () -> Unit, modifier: Mod
 
 @Composable
 private fun TransactionDialog(
-    onSubmit: (name: String, amount: String, type: TxType) -> String?,
+    onSubmit: (name: String, amount: String) -> String?,
     onDismiss: () -> Unit,
 ) {
-    var type by rememberSaveable { mutableStateOf(TxType.SENT) }
     var name by rememberSaveable { mutableStateOf("") }
     var amount by rememberSaveable { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (type == TxType.SENT) "Send money / pay" else "Receive money") },
+        title = { Text("Send money / pay") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(
-                        selected = type == TxType.SENT,
-                        onClick = { type = TxType.SENT; error = null },
-                        label = { Text("Pay") },
-                    )
-                    FilterChip(
-                        selected = type == TxType.RECEIVED,
-                        onClick = { type = TxType.RECEIVED; error = null },
-                        label = { Text("Receive") },
-                    )
-                }
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it.take(30); error = null },
-                    label = { Text(if (type == TxType.SENT) "Recipient name" else "Received from") },
+                    label = { Text("Recipient name") },
                     placeholder = { Text("Bank, Player 2, Rent") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
@@ -344,9 +379,9 @@ private fun TransactionDialog(
         },
         confirmButton = {
             TextButton(onClick = {
-                error = onSubmit(name, amount, type)
+                error = onSubmit(name, amount)
                 if (error == null) onDismiss()
-            }) { Text(if (type == TxType.SENT) "Pay" else "Receive") }
+            }) { Text("Pay") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )

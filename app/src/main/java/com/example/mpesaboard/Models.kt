@@ -6,14 +6,11 @@ import java.text.DecimalFormat
 import java.text.DecimalFormatSymbols
 import java.util.Locale
 
-enum class TxType { SENT, RECEIVED }
-
 /** One M-Pesa style SMS. [id] is the transaction code, e.g. "QG78KP92XZ". */
 data class SmsMessage(
     val id: String,
     val body: String,
     val timestamp: Long,
-    val type: TxType,
 )
 
 data class WalletState(

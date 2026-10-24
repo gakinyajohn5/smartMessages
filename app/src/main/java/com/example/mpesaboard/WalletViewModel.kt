@@ -31,44 +31,32 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Applies a transaction. Returns an error message to show in the form,
+     * Applies a payment. Returns an error message to show in the form,
      * or null on success.
      */
-    fun submit(recipient: String, amountText: String, type: TxType): String? {
+    fun submit(recipient: String, amountText: String): String? {
         val name = recipient.trim()
-        if (name.isEmpty()) {
-            return if (type == TxType.SENT) "Enter who you are paying" else "Enter who paid you"
-        }
+        if (name.isEmpty()) return "Enter who you are paying"
         val cents = Money.parse(amountText) ?: return "Enter a valid amount"
         if (cents <= 0) return "Amount must be greater than Ksh0.00"
 
         val current = _state.value
-        if (type == TxType.SENT && cents > current.balanceCents) {
+        if (cents > current.balanceCents) {
             return "Not enough balance. You have Ksh${Money.format(current.balanceCents)}"
         }
 
-        val newBalance =
-            if (type == TxType.SENT) current.balanceCents - cents else current.balanceCents + cents
+        val newBalance = current.balanceCents - cents
         val now = System.currentTimeMillis()
         val code = uniqueCode(current.messages)
         val date = SimpleDateFormat("d/M/yy", Locale.US).format(Date(now))
         val time = SimpleDateFormat("h:mm a", Locale.US).format(Date(now))
-        val amount = "Ksh${Money.format(cents)}"
-        val balance = "Ksh${Money.format(newBalance)}"
+        val body = "$code Confirmed. Ksh${Money.format(cents)} paid to $name. on $date at $time. " +
+            "New M-PESA balance is Ksh${Money.format(newBalance)}. Transaction cost, Ksh0.00."
 
-        val body = when (type) {
-            TxType.SENT ->
-                "$code Confirmed. $amount paid to $name. on $date at $time. " +
-                    "New M-PESA balance is $balance. Transaction cost, Ksh0.00."
-            TxType.RECEIVED ->
-                "$code Confirmed. You have received $amount from $name on $date at $time. " +
-                    "New M-PESA balance is $balance."
-        }
-
-        val message = SmsMessage(code, body, now, type)
+        val message = SmsMessage(code, body, now)
         _state.value = current.copy(
             balanceCents = newBalance,
-            messages = listOf(message) + current.messages,
+            messages = listOf(message) + current.messages, // stored newest first
             isSetUp = true,
         )
         _banner.value = message
@@ -104,7 +92,6 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
                     id = o.getString("id"),
                     body = o.getString("body"),
                     timestamp = o.getLong("ts"),
-                    type = TxType.valueOf(o.getString("type")),
                 )
             }
         }.getOrDefault(emptyList())
@@ -120,7 +107,6 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
                     .put("id", it.id)
                     .put("body", it.body)
                     .put("ts", it.timestamp)
-                    .put("type", it.type.name)
             )
         }
         prefs.edit()
