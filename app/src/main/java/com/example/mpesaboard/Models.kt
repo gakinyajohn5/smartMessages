@@ -14,7 +14,19 @@ enum class PayKind(val label: String) {
     POCHI("Pochi la Biashara"),
 }
 
-data class SmsMessage(val id: String, val body: String, val timestamp: Long)
+/**
+ * One message shown in the thread.
+ * - [sender] is the phone number / name it came from. Empty for messages made inside this app.
+ * - [sent] is true when YOU sent it (so it can be drawn on the right side).
+ * The two extra fields have defaults, so the older code that creates messages still works.
+ */
+data class SmsMessage(
+    val id: String,
+    val body: String,
+    val timestamp: Long,
+    val sender: String = "",
+    val sent: Boolean = false,
+)
 
 data class PayRequest(
     val kind: PayKind,
@@ -37,7 +49,9 @@ data class WalletState(
 
 /** All money is stored as Long cents to avoid floating point drift. */
 object Money {
-    const val DEFAULT_START_CENTS = 50_000_00L
+    // Players start with Ksh 0. Money only arrives by redeeming a top-up code that YOU create in Supabase,
+    // so the amount is always decided in your database, never typed into the app.
+    const val DEFAULT_START_CENTS = 0L
 
     private fun formatter() = DecimalFormat("#,##0.00", DecimalFormatSymbols(Locale.US))
 

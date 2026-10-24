@@ -1,5 +1,11 @@
 package com.example.mpesaboard
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -83,16 +89,43 @@ fun MpesaApp(vm: WalletViewModel) {
         return
     }
 
+    // Messages copied from the phone's own messages app (see WalletViewModel.importSms).
+    val imported by vm.imported.collectAsStateWithLifecycle()
+
+    // Do we already have permission to read the phone's messages?
+    val context = LocalContext.current
+    var smsGranted by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) ==
+                PackageManager.PERMISSION_GRANTED,
+        )
+    }
+    // The system pop-up that asks "Allow Pesa Board to read your messages?"
+    val askSmsPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        smsGranted = it
+    }
+    // Asks once when the screen opens (if not granted yet).
+    LaunchedEffect(Unit) {
+        if (!smsGranted) askSmsPermission.launch(Manifest.permission.READ_SMS)
+    }
+    // As soon as permission is granted, copy the messages in.
+    LaunchedEffect(smsGranted) {
+        if (smsGranted) vm.importSms()
+    }
+
     var showPay by rememberSaveable { mutableStateOf(false) }
     var showCash by rememberSaveable { mutableStateOf(false) }
     var showProfile by rememberSaveable { mutableStateOf(false) }
-    var showReset by rememberSaveable { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
 
     // Oldest at the top, newest at the bottom, grouped by day like a chat thread.
     val dayFmt = remember { SimpleDateFormat("EEE, d MMM", Locale.US) }
-    val grouped = remember(state.messages) {
-        state.messages.asReversed().groupBy { dayFmt.format(Date(it.timestamp)) }
+    // Combine the app's own messages with the phone's messages, newest first.
+    val allMessages = remember(state.messages, imported) {
+        (state.messages + imported).sortedByDescending { it.timestamp }
+    }
+    val grouped = remember(allMessages) {
+        allMessages.asReversed().groupBy { dayFmt.format(Date(it.timestamp)) }
     }
     val totalItems = grouped.values.sumOf { it.size + 1 }
     val listState = rememberLazyListState()
@@ -117,8 +150,6 @@ fun MpesaApp(vm: WalletViewModel) {
                                     onClick = { menuOpen = false; showCash = true })
                                 DropdownMenuItem(text = { Text("Profile") },
                                     onClick = { menuOpen = false; showProfile = true })
-                                DropdownMenuItem(text = { Text("Reset balance") },
-                                    onClick = { menuOpen = false; showReset = true })
                             }
                         }
                     },
@@ -140,9 +171,13 @@ fun MpesaApp(vm: WalletViewModel) {
             },
         ) { padding ->
             Column(Modifier.padding(padding).fillMaxSize()) {
-                PayBar(onClick = { showPay = true })
-                BalanceCard(state)
-                if (state.messages.isEmpty()) {
+                // The "Pay someone" bar and "Remaining balance" card were removed from here:
+                // the main screen is now just messages.
+                if (!smsGranted) {
+                    // Shown only if the user said no to the pop-up; tapping asks again.
+                    SmsPermissionBar(onClick = { askSmsPermission.launch(Manifest.permission.READ_SMS) })
+                }
+                if (allMessages.isEmpty()) {
                     EmptyInbox()
                 } else {
                     LazyColumn(
@@ -167,24 +202,8 @@ fun MpesaApp(vm: WalletViewModel) {
         )
     }
 
-    if (!state.isSetUp) {
-        BalanceDialog(
-            title = "Set your starting balance",
-            message = "Enter the balance you start with.",
-            confirmLabel = "Start",
-            onConfirm = vm::startNewGame,
-            onDismiss = null,
-        )
-    }
-    if (showReset) {
-        BalanceDialog(
-            title = "Reset balance?",
-            message = "This clears all messages and sets a new balance.",
-            confirmLabel = "Reset",
-            onConfirm = { vm.startNewGame(it); showReset = false },
-            onDismiss = { showReset = false },
-        )
-    }
+    // The old "Set your starting balance" and "Reset balance" boxes were removed:
+    // the balance is now controlled only by top-up codes from your Supabase database.
     if (showPay) PayDialog(onSubmit = vm::pay, onDismiss = { showPay = false })
     if (showCash) RedeemDialog(onSubmit = vm::redeem, onDismiss = { showCash = false })
     if (showProfile) {
@@ -196,63 +215,20 @@ fun MpesaApp(vm: WalletViewModel) {
     }
 }
 
-/** The "Pay someone" bar sitting between the top bar and the thread. */
+/** A small bar asking the user to allow reading messages (only shown while permission is missing). */
 @Composable
-private fun PayBar(onClick: () -> Unit) {
+private fun SmsPermissionBar(onClick: () -> Unit) {
     Surface(
         onClick = onClick,
-        shape = RoundedCornerShape(28.dp),
-        color = MaterialTheme.colorScheme.primary,
-        contentColor = MaterialTheme.colorScheme.onPrimary,
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.primaryContainer,
+        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
     ) {
-        Row(
-            Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null)
-            Spacer(Modifier.size(12.dp))
-            Text("Pay someone", fontWeight = FontWeight.Medium)
-        }
-    }
-}
-
-@Composable
-private fun BalanceCard(s: WalletState) {
-    Card(
-        modifier = Modifier.fillMaxWidth().padding(12.dp),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer,
-            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-        ),
-    ) {
-        Column(Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
-            Text("Remaining balance", style = MaterialTheme.typography.labelLarge)
-            Text(
-                "Ksh ${Money.format(s.balanceCents)}",
-                style = MaterialTheme.typography.headlineLarge,
-                fontWeight = FontWeight.Bold,
-            )
-            Row(Modifier.fillMaxWidth().padding(top = 12.dp)) {
-                Stat("Started with", s.startCents, Modifier.weight(1f))
-                Stat("Spent", s.spentCents, Modifier.weight(1f))
-                Stat("Added", s.addedCents, Modifier.weight(1f))
-            }
-        }
-    }
-}
-
-@Composable
-private fun Stat(label: String, cents: Long, modifier: Modifier = Modifier) {
-    Column(modifier) {
-        Text(label, style = MaterialTheme.typography.labelSmall)
         Text(
-            Money.format(cents),
-            style = MaterialTheme.typography.bodyMedium,
+            "Tap here to allow reading your messages",
             fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
         )
     }
 }
@@ -261,7 +237,7 @@ private fun Stat(label: String, cents: Long, modifier: Modifier = Modifier) {
 private fun EmptyInbox() {
     Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
         Text(
-            "No messages yet.\nTap Pay someone to make your first payment.",
+            "No messages yet.",
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -285,11 +261,25 @@ private fun SmsRow(message: SmsMessage) {
     val time = remember(message.timestamp) {
         SimpleDateFormat("h:mm a", Locale.US).format(Date(message.timestamp))
     }
-    Column {
+    // Messages you sent go on the right; everything else on the left.
+    val align = if (message.sent) Alignment.End else Alignment.Start
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = align) {
+        // Show who a copied message is from (the app's own messages have no sender).
+        if (message.sender.isNotBlank() && !message.sent) {
+            Text(
+                message.sender,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(start = 6.dp, bottom = 2.dp),
+            )
+        }
         Surface(
             shape = RoundedCornerShape(topStart = 4.dp, topEnd = 20.dp, bottomEnd = 20.dp, bottomStart = 20.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant,
-            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            // Sent messages get the accent colour, received ones the neutral colour.
+            color = if (message.sent) MaterialTheme.colorScheme.primaryContainer
+                    else MaterialTheme.colorScheme.surfaceVariant,
+            contentColor = if (message.sent) MaterialTheme.colorScheme.onPrimaryContainer
+                           else MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.widthIn(max = 300.dp),
         ) {
             Text(
@@ -302,7 +292,7 @@ private fun SmsRow(message: SmsMessage) {
             time,
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 6.dp, top = 2.dp),
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
         )
     }
 }
@@ -556,46 +546,5 @@ private fun ProfileDialog(
         },
         confirmButton = { TextButton(onClick = { onSave(name); onDismiss() }) { Text("Save") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-    )
-}
-
-@Composable
-private fun BalanceDialog(
-    title: String,
-    message: String,
-    confirmLabel: String,
-    onConfirm: (Long) -> Unit,
-    onDismiss: (() -> Unit)?,
-) {
-    var text by rememberSaveable { mutableStateOf("50000") }
-    val cents = Money.parse(text)
-    val valid = cents != null && cents >= 0
-
-    AlertDialog(
-        onDismissRequest = { onDismiss?.invoke() },
-        properties = DialogProperties(
-            dismissOnBackPress = onDismiss != null,
-            dismissOnClickOutside = onDismiss != null,
-        ),
-        title = { Text(title) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(message)
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { if (Money.isValidInput(it)) text = it },
-                    label = { Text("Starting balance (Ksh)") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(enabled = valid, onClick = { onConfirm(cents!!) }) { Text(confirmLabel) }
-        },
-        dismissButton = if (onDismiss != null) {
-            { TextButton(onClick = onDismiss) { Text("Cancel") } }
-        } else null,
     )
 }

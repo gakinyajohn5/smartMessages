@@ -2,6 +2,8 @@ package com.example.mpesaboard
 
 import android.app.Application
 import android.content.Context
+import android.provider.BaseColumns
+import android.provider.Telephony
 import android.provider.Settings
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -30,6 +32,59 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _banner = MutableStateFlow<SmsMessage?>(null)
     val banner: StateFlow<SmsMessage?> = _banner.asStateFlow()
+
+    // ---- messages copied from the phone's own messages app ---------------------
+
+    // Kept separate from the app's own messages and held in memory only. They are re-read from the
+    // phone each time, so they are always up to date and never uploaded anywhere.
+    private val _imported = MutableStateFlow<List<SmsMessage>>(emptyList())
+    val imported: StateFlow<List<SmsMessage>> = _imported.asStateFlow()
+
+    /** Reads every text message on the phone. Needs the READ_SMS permission to be granted first. */
+    fun importSms() {
+        viewModelScope.launch {
+            // Reading thousands of messages can be slow, so do it off the main thread.
+            _imported.value = withContext(Dispatchers.IO) { readPhoneSms() }
+        }
+    }
+
+    private fun readPhoneSms(): List<SmsMessage> {
+        val out = ArrayList<SmsMessage>()
+        // If the permission was not granted the query throws, so we just return an empty list.
+        runCatching {
+            getApplication<Application>().contentResolver.query(
+                Telephony.Sms.CONTENT_URI,                       // the phone's shared SMS database
+                arrayOf(
+                    BaseColumns._ID,
+                    Telephony.Sms.ADDRESS,                       // who it is from / to
+                    Telephony.Sms.BODY,                          // the text itself
+                    Telephony.Sms.DATE,                          // time in milliseconds
+                    Telephony.Sms.TYPE,                          // 1 = received, 2 = sent
+                ),
+                null, null,
+                "${Telephony.Sms.DATE} DESC",                    // newest first
+            )?.use { c ->
+                val iId = c.getColumnIndexOrThrow(BaseColumns._ID)
+                val iAddr = c.getColumnIndexOrThrow(Telephony.Sms.ADDRESS)
+                val iBody = c.getColumnIndexOrThrow(Telephony.Sms.BODY)
+                val iDate = c.getColumnIndexOrThrow(Telephony.Sms.DATE)
+                val iType = c.getColumnIndexOrThrow(Telephony.Sms.TYPE)
+                while (c.moveToNext()) {
+                    val type = c.getInt(iType)
+                    // Skip drafts, failed and queued messages; keep only received (1) and sent (2).
+                    if (type != Telephony.Sms.MESSAGE_TYPE_INBOX && type != Telephony.Sms.MESSAGE_TYPE_SENT) continue
+                    out += SmsMessage(
+                        id = "sms-${c.getLong(iId)}",            // "sms-" prefix so it never clashes with app codes
+                        body = c.getString(iBody).orEmpty(),
+                        timestamp = c.getLong(iDate),
+                        sender = c.getString(iAddr).orEmpty(),
+                        sent = type == Telephony.Sms.MESSAGE_TYPE_SENT,
+                    )
+                }
+            }
+        }
+        return out
+    }
 
     fun startNewGame(startingCents: Long) {
         val old = _state.value
@@ -184,7 +239,8 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun load(): WalletState {
         if (!prefs.getBoolean(KEY_SETUP, false)) {
-            return WalletState(licenseCode = prefs.getString(KEY_LICENSE, "") ?: "")
+            // First launch: go straight in with Ksh 0 (isSetUp = true skips the old "starting balance" box).
+            return WalletState(licenseCode = prefs.getString(KEY_LICENSE, "") ?: "", isSetUp = true)
         }
         val messages = runCatching {
             val arr = JSONArray(prefs.getString(KEY_MESSAGES, "[]"))

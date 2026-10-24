@@ -3,6 +3,13 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Lets the app read the phone's text messages (inbox + sent) so it can show them in the app.
+         Android shows a pop-up asking the user to allow this the first time. -->
+    <uses-permission android:name="android.permission.READ_SMS" />
+
+    <!-- Not every device has a SMS/telephony chip (e.g. tablets), so don't block installing on them. -->
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
+
     <application
         android:allowBackup="true"
         android:icon="@drawable/ic_launcher"
