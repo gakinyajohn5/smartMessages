@@ -21,20 +21,22 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -45,18 +47,19 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.ui.graphics.Color
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
@@ -74,7 +77,9 @@ fun MpesaApp(vm: WalletViewModel) {
     val state by vm.state.collectAsStateWithLifecycle()
     val banner by vm.banner.collectAsStateWithLifecycle()
 
-    var showForm by rememberSaveable { mutableStateOf(false) }
+    var showPay by rememberSaveable { mutableStateOf(false) }
+    var showCash by rememberSaveable { mutableStateOf(false) }
+    var showProfile by rememberSaveable { mutableStateOf(false) }
     var showReset by rememberSaveable { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
 
@@ -94,10 +99,26 @@ fun MpesaApp(vm: WalletViewModel) {
             containerColor = MaterialTheme.colorScheme.surface,
             topBar = {
                 TopAppBar(
-                    navigationIcon = { Avatar(Modifier.padding(start = 16.dp, end = 4.dp)) },
+                    navigationIcon = {
+                        Box {
+                            IconButton(onClick = { menuOpen = true }) {
+                                Icon(Icons.Default.Menu, contentDescription = "Menu")
+                            }
+                            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                                DropdownMenuItem(text = { Text("Pay someone") },
+                                    onClick = { menuOpen = false; showPay = true })
+                                DropdownMenuItem(text = { Text("Add cash (banker)") },
+                                    onClick = { menuOpen = false; showCash = true })
+                                DropdownMenuItem(text = { Text("Profile") },
+                                    onClick = { menuOpen = false; showProfile = true })
+                                DropdownMenuItem(text = { Text("Reset balance") },
+                                    onClick = { menuOpen = false; showReset = true })
+                            }
+                        }
+                    },
                     title = {
                         Column {
-                            Text("MPESA", fontWeight = FontWeight.Medium)
+                            Text(state.playerName.ifBlank { "MPESA" }, fontWeight = FontWeight.Medium)
                             Text(
                                 "Practice wallet, not real M-PESA",
                                 style = MaterialTheme.typography.labelSmall,
@@ -105,28 +126,16 @@ fun MpesaApp(vm: WalletViewModel) {
                             )
                         }
                     },
-                    actions = {
-                        Box {
-                            IconButton(onClick = { menuOpen = true }) {
-                                Icon(Icons.Default.MoreVert, contentDescription = "More options")
-                            }
-                            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                                DropdownMenuItem(
-                                    text = { Text("Reset balance") },
-                                    onClick = { menuOpen = false; showReset = true },
-                                )
-                            }
-                        }
-                    },
+                    actions = { Avatar(Modifier.padding(end = 16.dp)) },
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = MaterialTheme.colorScheme.surface,
                     ),
                 )
             },
-            bottomBar = { if (state.isSetUp) ComposerBar(onClick = { showForm = true }) },
         ) { padding ->
             Column(Modifier.padding(padding).fillMaxSize()) {
-                BalanceCard(state.balanceCents)
+                PayBar(onClick = { showPay = true })
+                BalanceCard(state)
                 if (state.messages.isEmpty()) {
                     EmptyInbox()
                 } else {
@@ -170,57 +179,41 @@ fun MpesaApp(vm: WalletViewModel) {
             onDismiss = { showReset = false },
         )
     }
-    if (showForm) {
-        TransactionDialog(onSubmit = vm::submit, onDismiss = { showForm = false })
+    if (showPay) PayDialog(onSubmit = vm::pay, onDismiss = { showPay = false })
+    if (showCash) CashDialog(onSubmit = vm::addCash, onDismiss = { showCash = false })
+    if (showProfile) {
+        ProfileDialog(
+            initialName = state.playerName,
+            initialPin = state.bankerPin,
+            onSave = vm::saveProfile,
+            onDismiss = { showProfile = false },
+        )
     }
 }
 
+/** The "Pay someone" bar sitting between the top bar and the thread. */
 @Composable
-private fun ComposerBar(onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .navigationBarsPadding()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
+private fun PayBar(onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(28.dp),
+        color = MaterialTheme.colorScheme.primary,
+        contentColor = MaterialTheme.colorScheme.onPrimary,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
     ) {
-        Surface(
-            onClick = onClick,
-            shape = RoundedCornerShape(28.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant,
-            modifier = Modifier.weight(1f),
+        Row(
+            Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                "Pay someone",
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Spacer(Modifier.size(8.dp))
-        Surface(onClick = onClick, shape = CircleShape, color = MaterialTheme.colorScheme.primary) {
-            Icon(
-                Icons.AutoMirrored.Filled.Send,
-                contentDescription = "Send money",
-                tint = MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier.padding(14.dp),
-            )
+            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null)
+            Spacer(Modifier.size(12.dp))
+            Text("Pay someone", fontWeight = FontWeight.Medium)
         }
     }
 }
 
 @Composable
-private fun DayHeader(day: String) {
-    Text(
-        day,
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-    )
-}
-
-@Composable
-private fun BalanceCard(balanceCents: Long) {
+private fun BalanceCard(s: WalletState) {
     Card(
         modifier = Modifier.fillMaxWidth().padding(12.dp),
         shape = RoundedCornerShape(20.dp),
@@ -230,13 +223,32 @@ private fun BalanceCard(balanceCents: Long) {
         ),
     ) {
         Column(Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
-            Text("M-PESA balance", style = MaterialTheme.typography.labelLarge)
+            Text("Remaining balance", style = MaterialTheme.typography.labelLarge)
             Text(
-                "Ksh ${Money.format(balanceCents)}",
+                "Ksh ${Money.format(s.balanceCents)}",
                 style = MaterialTheme.typography.headlineLarge,
                 fontWeight = FontWeight.Bold,
             )
+            Row(Modifier.fillMaxWidth().padding(top = 12.dp)) {
+                Stat("Started with", s.startCents, Modifier.weight(1f))
+                Stat("Spent", s.spentCents, Modifier.weight(1f))
+                Stat("Added", s.addedCents, Modifier.weight(1f))
+            }
         }
+    }
+}
+
+@Composable
+private fun Stat(label: String, cents: Long, modifier: Modifier = Modifier) {
+    Column(modifier) {
+        Text(label, style = MaterialTheme.typography.labelSmall)
+        Text(
+            Money.format(cents),
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -247,8 +259,20 @@ private fun EmptyInbox() {
             "No messages yet.\nTap Pay someone to make your first payment.",
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
         )
     }
+}
+
+@Composable
+private fun DayHeader(day: String) {
+    Text(
+        day,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        textAlign = TextAlign.Center,
+    )
 }
 
 @Composable
@@ -291,7 +315,6 @@ private fun Avatar(modifier: Modifier = Modifier, size: Int = 36) {
 /** Slides down from the top, shows the SMS, then dismisses itself. Tap to dismiss early. */
 @Composable
 fun TransactionBanner(message: SmsMessage?, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
-    // Keep the last message so the text doesn't vanish while the exit animation runs.
     var last by remember { mutableStateOf(message) }
     LaunchedEffect(message?.id) {
         if (message != null) {
@@ -344,25 +367,110 @@ fun TransactionBanner(message: SmsMessage?, onDismiss: () -> Unit, modifier: Mod
 }
 
 @Composable
-private fun TransactionDialog(
-    onSubmit: (name: String, amount: String) -> String?,
-    onDismiss: () -> Unit,
-) {
+private fun PayDialog(onSubmit: (PayRequest) -> String?, onDismiss: () -> Unit) {
+    var kind by rememberSaveable { mutableStateOf(PayKind.BANK) }
     var name by rememberSaveable { mutableStateOf("") }
+    var number by rememberSaveable { mutableStateOf("") }
+    var account by rememberSaveable { mutableStateOf("") }
+    var amount by rememberSaveable { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    val nameLabel = when (kind) {
+        PayKind.BANK -> "Bank name"
+        PayKind.PAYBILL, PayKind.TILL -> "Business name"
+        PayKind.POCHI -> "Recipient name"
+    }
+    val numberLabel = when (kind) {
+        PayKind.BANK, PayKind.PAYBILL -> "Paybill number"
+        PayKind.TILL -> "Till number"
+        PayKind.POCHI -> "Phone number"
+    }
+    val needsAccount = kind == PayKind.BANK || kind == PayKind.PAYBILL
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Pay someone") },
+        text = {
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                PayKind.entries.chunked(2).forEach { row ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        row.forEach { k ->
+                            FilterChip(
+                                selected = kind == k,
+                                onClick = { kind = k; error = null },
+                                label = { Text(k.label) },
+                            )
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it.take(30); error = null },
+                    label = { Text(nameLabel) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = number,
+                    onValueChange = { if (it.all(Char::isDigit) && it.length <= 10) { number = it; error = null } },
+                    label = { Text(numberLabel) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (needsAccount) {
+                    OutlinedTextField(
+                        value = account,
+                        onValueChange = { account = it.take(20); error = null },
+                        label = { Text("Account number") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                OutlinedTextField(
+                    value = amount,
+                    onValueChange = { if (Money.isValidInput(it)) { amount = it; error = null } },
+                    label = { Text("Amount (Ksh)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    isError = error != null,
+                    supportingText = error?.let { { Text(it) } },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                error = onSubmit(PayRequest(kind, name, number, account, amount))
+                if (error == null) onDismiss()
+            }) { Text("Pay") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun CashDialog(onSubmit: (pin: String, amount: String) -> String?, onDismiss: () -> Unit) {
+    var pin by rememberSaveable { mutableStateOf("") }
     var amount by rememberSaveable { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Send money / pay") },
+        title = { Text("Add cash (banker)") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("The banker enters their PIN to add cash to this wallet.")
                 OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it.take(30); error = null },
-                    label = { Text("Recipient name") },
-                    placeholder = { Text("Bank, Player 2, Rent") },
+                    value = pin,
+                    onValueChange = { if (it.all(Char::isDigit) && it.length <= 8) { pin = it; error = null } },
+                    label = { Text("Banker PIN") },
                     singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
@@ -379,9 +487,55 @@ private fun TransactionDialog(
         },
         confirmButton = {
             TextButton(onClick = {
-                error = onSubmit(name, amount)
+                error = onSubmit(pin, amount)
                 if (error == null) onDismiss()
-            }) { Text("Pay") }
+            }) { Text("Add cash") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun ProfileDialog(
+    initialName: String,
+    initialPin: String,
+    onSave: (name: String, pin: String) -> String?,
+    onDismiss: () -> Unit,
+) {
+    var name by rememberSaveable { mutableStateOf(initialName) }
+    var pin by rememberSaveable { mutableStateOf(initialPin) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Profile") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it.take(20) },
+                    label = { Text("Player name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = pin,
+                    onValueChange = { if (it.all(Char::isDigit) && it.length <= 8) { pin = it; error = null } },
+                    label = { Text("Banker PIN (set by the banker)") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    isError = error != null,
+                    supportingText = error?.let { { Text(it) } },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                error = onSave(name, pin)
+                if (error == null) onDismiss()
+            }) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
