@@ -15,8 +15,8 @@ android {
         versionCode = 1
         versionName = "1.0"
         // Supabase project URL and the anon / publishable key (safe to ship; never the service_role key).
-        buildConfigField("String", "SUPABASE_URL", "\"https://xsdwxnlhfyplzilxzznq.supabase.co/rest/v1/"")
-        buildConfigField("String", "SUPABASE_KEY", "\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhzZHd4bmxoZnlwbHppbHh6em5xIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI4NTI4MTEsImV4cCI6MjEwODQyODgxMX0.JAIbExqyixPCbgD8sWU0DoIyFBpdh4WmNLqhTGRBQFY"")
+ buildConfigField("String", "SUPABASE_URL", "\"https://xsdwxnlhfyplzilxzznq.supabase.co/rest/v1/\"")
+        buildConfigField("String", "SUPABASE_KEY", "\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhzZHd4bmxoZnlwbHppbHh6em5xIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI4NTI4MTEsImV4cCI6MjEwODQyODgxMX0.JAIbExqyixPCbgD8sWU0DoIyFBpdh4WmNLqhTGRBQFY\"")
     }
 
     buildTypes {
